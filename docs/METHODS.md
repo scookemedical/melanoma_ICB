@@ -76,6 +76,19 @@ sulfate and ions left unlimited and secretion free. Vitamin B12
 cofactor biomass pool cannot be produced and the model cannot grow at all.
 Glutamine's reference is 0.6 mM; the sweep multiplies that bound only.
 
+### Glutamine dose: a fixed flux, not a cap
+
+The glutamine exchange is **fixed** at the dose (lower bound = upper bound),
+not merely capped by it. This is the single most consequential modelling choice
+here. Glutamine uptake is concentration-driven, so raising plasma glutamine
+raises uptake whether or not the cell needs the carbon. Left as an upper bound,
+a growth-maximising model simply declines the extra glutamine: biomass is
+medium-limited rather than glutamine-limited in this medium, so the dose
+response measured that way is identically zero. Fixing the flux forces the model
+to dispose of the supplemented load, which is both the question actually asked
+and what was observed in vivo -- dietary glutamine raised intratumoural
+alpha-ketoglutarate without raising biosynthetic intermediates.
+
 ### Transcriptome constraint (E-Flux)
 
 E-Flux (Colijn et al., PLoS Comput Biol 2009) scales reaction flux bounds by
@@ -88,18 +101,51 @@ per sample. Three implementation choices matter:
   under max vs several hundred under sum) and then compresses every other bound
   during normalisation.
 - **Normalisation to the 99th percentile, clipped at 1,** for the same reason.
-- **`vmax` on the order of the uptake fluxes, and a 1% bound floor.** If `vmax`
-  is far above the uptake scale the bounds never bind and the result collapses
-  back to a stoichiometric yield calculation — exactly the artefact this analysis
-  exists to avoid. The floor is needed because one unexpressed subunit in an AND
-  clause otherwise drives a bound to exactly zero and can make the model unable
-  to grow; a transcript below detection means low, not absent.
+- **`vmax` on the order of the realised fluxes, not the uptake bounds.** This
+  was calibrated empirically, and it matters more than any other parameter:
 
-### Production capacity
+  | `vmax` | biomass | reactions at bound | between-sample CV of alpha-KG turnover |
+  |---|---|---|---|
+  | 30 | 0.00966 (invariant) | — | **0.000** |
+  | 3  | 0.00966 (invariant) | ~62 | 0.21 |
+  | 1  | 0.00966 (invariant) | ~45-67 | 0.11 |
+  | **0.3** | **0.0065-0.0076 (varies by sample)** | **54-119** | **0.13** |
+  | 0.1 | infeasible | — | — |
 
-For each metabolite a temporary demand reaction (`met ->`) is added and maximised
-with biomass floored at 90% of its own optimum, so the number is a capacity under
-a still-proliferating phenotype rather than a free-for-all conversion yield.
+  At `vmax` >= 1 the caps sit far above the realised fluxes (median |flux|
+  ~5e-6, maximum ~0.2), nothing binds, and every sample returns an identical
+  answer: the readout has collapsed to stoichiometry plus uptake bounds, which
+  is exactly the artefact this analysis exists to avoid. **0.3 is the tightest
+  feasible setting and the only one at which biomass itself becomes
+  transcriptome-limited**, so it is the operating point; `vmax = 1` is kept as a
+  sensitivity check.
+- **A 0.5% bound floor,** because one unexpressed subunit in an AND clause
+  otherwise drives a bound to exactly zero and can make the model unable to
+  grow: a transcript below detection means low, not absent.
+
+### Readout: turnover, not capacity
+
+The first implementation maximised a per-metabolite demand reaction and reported
+that capacity. **That readout had to be discarded.** In a network with ~12,700
+reactions the optimum simply reroutes around any expression cap, so measured on
+this model the per-sample capacities varied by under 1% while sitting at exact
+stoichiometric ratios of one another -- glutamate, aspartate, proline and ammonia
+all at 0.7387, asparagine, putrescine and ornithine all at exactly half that.
+A max-capacity objective in a genome-scale model is a stoichiometry-and-uptake
+calculation wearing a transcriptomic costume.
+
+Net production is identically zero for any internal metabolite at steady state,
+so the informative quantity is **gross synthesis (turnover)**:
+
+```
+turnover_i = sum over reactions r of max(0, S_ir * v_r)
+```
+
+read off a **parsimonious FBA** solution (maximise biomass, then minimise total
+absolute flux). pFBA returns one well-defined flux distribution that must respect
+every expression cap, so the result is genuinely transcriptome-dependent. This is
+the readout style used by METAFlux and scFEA. It is also ~8x faster than the
+capacity sweep, because it needs two LPs per sample-dose rather than sixteen.
 
 ### Impact score
 

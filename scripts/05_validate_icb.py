@@ -28,7 +28,7 @@ panel = pd.read_csv(a.panel, sep="\t")
 lab = dict(zip(panel["met_id"], panel["label"]))
 
 base = sweep[np.isclose(sweep["dose"], a.dose)]
-wide = base.pivot_table(index="sample", columns="met_id", values="flux")
+wide = base.pivot_table(index="sample", columns="met_id", values="turnover")
 meta = samples.set_index("sample")
 dat = wide.join(meta[["response3", "PFS", "PFS_event", "OS", "OS_event",
                       "cohort", "patient"]], how="inner")
@@ -58,18 +58,25 @@ for met in wide.columns:
     for tag, tcol, ecol in (("pfs", "PFS", "pfs_evt"), ("os", "OS", "os_evt")):
         cox = dat[[met, tcol, ecol]].dropna()
         cox = cox[cox[tcol] > 0]
-        if len(cox) >= 15 and cox[ecol].sum() >= 5:
+        # A predictor that is near-constant makes the partial likelihood flat:
+        # the fit "succeeds" with an absurd HR and p = 1. Require real spread.
+        if (len(cox) >= 15 and cox[ecol].sum() >= 5
+                and cox[met].nunique() >= 5):
             cap = cox[met].to_numpy(dtype=float)
             cap = (cap - cap.mean()) / cap.std(ddof=1)
             try:
                 fit = PHReg(cox[tcol].to_numpy(dtype=float),
                             cap.reshape(-1, 1),
                             status=cox[ecol].to_numpy(dtype=float)).fit()
+                if not np.isfinite(fit.params[0]) or abs(fit.params[0]) > 10:
+                    raise ValueError("Cox fit did not converge to a sane HR")
                 rec[f"hr_{tag}"] = float(np.exp(fit.params[0]))
                 rec[f"p_{tag}"] = float(fit.pvalues[0])
             except Exception as exc:
                 rec[f"p_{tag}"] = np.nan
                 rec[f"note_{tag}"] = str(exc)[:60]
+        else:
+            rec[f"note_{tag}"] = "insufficient events or near-constant predictor"
     rows.append(rec)
 
 res = pd.DataFrame(rows)
