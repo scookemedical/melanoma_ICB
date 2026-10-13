@@ -1,0 +1,4 @@
+# Large external inputs and intermediate flux tables live outside the repo.
+results/*.tsv.gz
+*.pkl
+__pycache__/
